@@ -1,0 +1,52 @@
+# Secrets & local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+google-services.json
+GoogleService-Info.plist
+credentials*.json
+service-account*.json
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output & caches
+dist/
+build/
+out/
+.next/
+.expo/
+.turbo/
+coverage/
+*.tsbuildinfo
+.cache/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# Local databases & dumps
+*.sqlite
+*.sqlite3
+*.dump
+*.sql.gz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Local AI assistant settings
+.claude/settings.local.json
