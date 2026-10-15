@@ -12,7 +12,7 @@ Evidence labels: **[V]** vendor-verified · **[S]** secondary source · **[I]** 
    - **Booking-first marketplaces** (Booksy, Fresha, theCut, SQUIRE) are built around future appointments. Each one also includes discovery, reviews, payments, deposits, and no-show protection.
    - **Queue-first tools** (Waitwhile, Qminder, Great Clips' in-house Online Check-In) are built around walk-ins and live wait times. They have no consumer discovery marketplace and are often priced for enterprises (Qminder starts at $869/month [V]).
    - Barbershops that take walk-ins *and* appointments on the same chairs are served poorly by both camps. This is our main opening. **[R]**
-2. **The established norm for reviews is verified visits only.** Booksy [V] and Fresha [V] only accept reviews tied to a completed appointment. We should match this; it is not a differentiator.
+2. **Verified-visit reviews are the baseline among the competitors studied.** Booksy [V] and Fresha [V] only accept reviews tied to a completed appointment. We should match this; it is not a differentiator. *(v0.2 wording fix: two vendors are not proof of an industry norm.)*
 3. **Monetization has converged on a cheap subscription plus a marketplace acquisition fee.**
    - Booksy: $29.99/month + $20 per extra staff member. Its optional Boost charges a one-time 30% fee on a new client's first visit, capped at $100 [V].
    - Fresha: per-member subscription plus a one-time, non-refundable new-client fee [V]. The rate is reported at 20% [S].
@@ -87,7 +87,7 @@ Columns: Target user · Business value (H/M/L) · Complexity (H/M/L) · Build? �
 | Geo search (radius, distance sort, list + map) | Customer | H | M | Yes | **P0** | theCut [V], Fresha [V] | PostGIS. Manual location entry must work without device permission. |
 | Live status in search results (open / accepting walk-ins / est. wait) | Customer | H | M | Yes | **P0** | Not found in marketplaces | **Differentiator.** Depends on staff keeping status accurate. |
 | Business profile, photos, services, prices, staff | Customer | H | L | Yes | **P0** | All marketplaces | Photo moderation needed. |
-| Barber portfolio / haircut styles | Customer | M | M | Yes | P1 | theCut [V] | Owned by barber or shop? (D-5) |
+| Barber portfolio / haircut styles | Customer | M | M | Yes | P1 | theCut [V] | Owned by the business in the MVP (D-5/D-5c approved). A portable portfolio is deferred. |
 | Appointment booking with availability engine | Both | H | H | Yes | **P0** | All booking tools | Concurrency-safe (DB constraint). |
 | Multi-service booking (e.g., cut + beard) | Customer | H | M | Yes | **P0** | [I] common | Sequential, same barber, summed duration. |
 | Walk-in queue managed by staff | Staff | H | M | Yes | **P0** | Waitwhile, Qminder [V] | Core of hybrid model. |
@@ -102,7 +102,7 @@ Columns: Target user · Business value (H/M/L) · Complexity (H/M/L) · Build? �
 | Review photos | Customer | L | M | Later | P1 | [?] | PII / moderation burden. |
 | Deposits / no-show fees | Business | H | H | Later | P1 | Booksy, Fresha, SQUIRE | Requires a local PSP; cash-first markets (D-7). |
 | Trusted-client fee waiver / client block | Business | M | L | Yes | P1 | Booksy [V] | Block list is a P0 candidate for abuse control. |
-| In-shop kiosk / TV queue display | Business | M | M | Yes | P1 | Waitwhile [V], Qminder [V], SQUIRE [S] | Public display must hide PII (first name + initial). |
+| In-shop kiosk / TV queue display | Business | M | M | Yes | P1 | Waitwhile [V], Qminder [V], SQUIRE [S] | Public display shows ticket numbers and the barber's name only, with no customer names or initials (FR-QUE-11, v0.2). |
 | POS, payouts, chair-rent collection | Business | M | H | Later | P2 | SQUIRE [S] | Financial/regulatory scope. |
 | Memberships, loyalty, gift cards | Business | M | M | Later | P2 | Booksy [V], Fresha add-on [V] | |
 | Analytics (visits, wait, service time, no-shows) | Business | H | M | Basic | **P0** basic / P1 adv. | All | |
@@ -130,7 +130,7 @@ Columns: Target user · Business value (H/M/L) · Complexity (H/M/L) · Build? �
    - An optional distance limit when joining.
    - One active queue entry per customer.
    - Private reliability signals visible to businesses.
-6. **Barber identity that moves with the barber (D-5).** Barbers move between shops, and customers follow barbers. A portable professional profile is barber-centric (like theCut) and works with a business-centric tenant model.
+6. **Barber identity that moves with the barber — deferred.** Barbers move between shops, and customers follow barbers. A portable professional profile is barber-centric (like theCut) and works with a business-centric tenant model. *v0.2 note: D-5 (approved 2026-10-14) chose an employees-only MVP, and D-5c gives customer records to the business. This idea is a post-MVP opportunity, not an MVP differentiator.*
 
 ---
 

@@ -1,6 +1,18 @@
 # 03 — MVP Recommendation & Practical Architecture
 
-Version 0.1 · 2026-10-14 · Status: Draft (recommendations, pending decisions in [04](04-open-decisions.md))
+Version 0.3 · 2026-10-14 · Status: Draft (recommendations, pending decisions in [04](04-open-decisions.md))
+
+> **Changelog v0.2 (2026-10-14), from the [05 design review](05-design-review.md):**
+> - New `visit` module.
+> - §4.1, §4.3, and §4.4 are superseded by [database-design](architecture/database-design.md), [queue-lifecycle](domain/queue-lifecycle.md), and [booking-lifecycle](domain/booking-lifecycle.md). The original drafts are kept below for history.
+> - Hosting depends on [ADR-0005](adr/0005-hosting-and-data-residency.md).
+> - §5 is detailed in [tenant-isolation-and-security](architecture/tenant-isolation-and-security.md).
+> - §7 is replaced by [domain-model](domain/domain-model.md).
+>
+> **Changelog v0.3 (2026-10-14, audit round 2; see [05 §9](05-design-review.md)):**
+> - §4 is rewritten as a summary of the authoritative documents. The v0.1 drafts (including the obsolete `IN_SERVICE` queue state, `SKIPPED`, and the per-entry remote index) are moved into a clearly marked historical block.
+> - §4.6 now covers `seq` batches and session channels.
+> - §5 reflects per-surface DB roles and the classification registry.
 
 ---
 
@@ -77,7 +89,8 @@ flowchart LR
     CAT[catalog & pricing]
     SCH[schedules & availability]
     BKG[booking]
-    QUE[queue & visits]
+    QUE[queue]
+    VIS[visit]
   end
   subgraph Marketplace
     DIS[discovery read model]
@@ -88,7 +101,9 @@ flowchart LR
   BKG --> SCH
   QUE --> SCH
   QUE --> BKG
-  REV -->|visit completed event| QUE
+  QUE --> VIS
+  BKG --> VIS
+  REV -->|visit completed event| VIS
   DIS -.projection via events.-> TEN & CAT & QUE & REV
   BKG & QUE & REV -.events.-> NTF
 ```
@@ -123,14 +138,63 @@ flowchart LR
 | Object storage | S3-compatible + CDN; signed upload URLs; image processing & EXIF stripping | Standard | — | Moderation pipeline required |
 | Notifications | Push (Expo/FCM/APNs) + WhatsApp Business Platform and/or SMS provider (D-8) | Matches ASSUMPTION-2 | — | Per-message cost; template approval for WhatsApp |
 | Monorepo | **pnpm + Turborepo** | Shared packages: `contracts`, `ui`, `i18n`, `domain-types` | Nx | — |
-| Hosting | Managed containers + managed PostgreSQL in the region closest to users / required by data residency (D-1, D-17) | Low ops overhead | Kubernetes (premature) | Vendor choice is open |
+| Hosting | Containers + PostgreSQL, **cloud-portable** until Egypt data residency is decided (D-23, [ADR-0005](adr/0005-hosting-and-data-residency.md)). Hosting outside Egypt reportedly requires a PDPL cross-border transfer licence. | Low ops overhead; no lock-in | Kubernetes (premature) | Vendor and region are open |
 | Observability | **OpenTelemetry** (traces/metrics/logs) → a hosted backend; **Sentry** for errors | Vendor-neutral instrumentation | — | Every log carries `tenant_id`, `request_id`, and the user id (hashed in logs) |
 
 ---
 
 ## 4. Consistency design (core invariants)
 
-### 4.1 Booking — no double booking
+> **v0.3:** this section is now a **summary**. The authoritative rules live in:
+> - [database-design §5–§7](architecture/database-design.md)
+> - [booking-lifecycle](domain/booking-lifecycle.md)
+> - [queue-lifecycle](domain/queue-lifecycle.md)
+>
+> The original v0.1 drafts of §4.1–§4.5 are preserved at the end of this section as **historical, superseded text that must not be implemented**.
+
+### 4.1 Booking — no double booking (summary)
+- **Overlaps:** planned time (appointments, staff time off) is stored in `scheduling.staff_commitment`, where a GiST exclusion constraint makes overlapping active commitments for one provider impossible. A conflict (`23P01`) → `409 SLOT_UNAVAILABLE`.
+- **Overruns:** actual service time may overrun; overruns are not commitments.
+- **Closures:** branch closures and hour reductions require explicit resolution of affected appointments (booking-lifecycle §5a).
+- **"Any barber":** deterministic candidate order, one savepoint per attempt.
+- **Idempotency:** creation commands take an `Idempotency-Key`, stored in the same transaction. Only successful outcomes are replayed (database-design §7).
+
+### 4.2 Queue — no double serving, ordered updates (summary)
+- Every change to a branch queue, its lanes, or its ETAs follows the **queue mutation protocol** (database-design §6.1):
+  1. one transaction;
+  2. `UPDATE queue SET seq = seq + 1 … RETURNING` takes the lock and reserves exactly one `seq`;
+  3. guards and conditional updates on `(state, version)`;
+  4. `queue_event` rows `(seq, idx)` plus one outbox row;
+  5. commit.
+  A rollback consumes no `seq`, and no event is published for it.
+- **Visits:**
+  - at most one CALLED entry and one IN_SERVICE **visit** per provider (partial unique indexes);
+  - a visit has exactly one source (appointment XOR queue entry);
+  - each source has at most one visit.
+- **Remote sessions:** one ACTIVE remote **session** per user platform-wide. This is a product rule enforced by a partial unique index (P-1). A session may hold several linked entries.
+
+### 4.3 Queue entry, remote session, and visit states (summary)
+- **Queue entry:** `WAITING → CALLED → SERVED`, or `CANCELLED`, `NO_SHOW`, `EXPIRED`. Presence (`NOT_ARRIVED`/`ARRIVED`) is separate, and skip is a counted transition.
+- **Remote session:** `ACTIVE → ENDED`.
+- **Visit:** `IN_SERVICE → COMPLETED | VOIDED`.
+- See [queue-lifecycle](domain/queue-lifecycle.md).
+
+### 4.4 Appointment states (summary)
+- `CONFIRMED → CHECKED_IN → FULFILLED`, or `CANCELLED`, `NO_SHOW`, `CONVERTED_TO_WALK_IN`.
+- `REQUESTED`/`REJECTED`/`EXPIRED` come with the P1 approval flow.
+- Direct start without check-in is open (D-33).
+- See [booking-lifecycle](domain/booking-lifecycle.md).
+
+### 4.5 How the system reacts (summary)
+See the scenario table in [queue-lifecycle §8](domain/queue-lifecycle.md). That table is authoritative. Open items there: D-32 (same-day availability during overruns), D-34 (`arrive_by` movement), and D-38 (converted-appointment placement).
+
+<details>
+<summary><strong>Historical v0.1 drafts of §4.1–§4.5 — SUPERSEDED, do not implement</strong></summary>
+
+
+#### (v0.1) 4.1 Booking — no double booking
+
+> *Superseded (v0.2):* see [database-design §5.1](architecture/database-design.md). The table is now `scheduling.staff_commitment` with `resource_id` and `kind`.
 
 Checking availability and then inserting is a race condition, so the database has to enforce the invariant:
 
@@ -167,7 +231,7 @@ CREATE TABLE booking.staff_commitment (
 
 **Tests:** N concurrent requests against a real PostgreSQL (Testcontainers) prove exactly-one-wins.
 
-### 4.2 Queue — no double serving, ordered updates
+#### (v0.1) 4.2 Queue — no double serving, ordered updates
 
 - Each state change is a conditional update: `UPDATE queue.entry SET state='IN_SERVICE', served_by=$staff, version=version+1 WHERE id=$id AND state='CALLED' AND version=$v RETURNING *`. Zero rows → `409 INVALID_STATE` with the current state.
 - Partial unique indexes:
@@ -177,7 +241,9 @@ CREATE TABLE booking.staff_commitment (
 - The event is written to `queue.event` (the append-only log, also used for audit/analytics) and to the outbox.
 - Service starts create a **visit** record (BR-11).
 
-### 4.3 Queue entry state machine (draft)
+#### (v0.1) 4.3 Queue entry state machine (draft)
+
+> *Superseded (v0.2):* see [queue-lifecycle](domain/queue-lifecycle.md). `CHECKED_IN`/`IN_SERVICE`/`COMPLETED` are no longer queue-entry states; presence is separate, and service progress lives on the Visit.
 
 ```mermaid
 stateDiagram-v2
@@ -198,7 +264,9 @@ stateDiagram-v2
   CANCELLED --> [*]
 ```
 
-### 4.4 Appointment state machine (draft)
+#### (v0.1) 4.4 Appointment state machine (draft)
+
+> *Superseded (v0.2):* see [booking-lifecycle](domain/booking-lifecycle.md). `IN_SERVICE`/`COMPLETED` move to the Visit; `FULFILLED` and `CONVERTED_TO_WALK_IN` were added.
 
 ```mermaid
 stateDiagram-v2
@@ -214,7 +282,7 @@ stateDiagram-v2
   IN_SERVICE --> COMPLETED
 ```
 
-### 4.5 How the system reacts (summary — full design in a later document)
+#### (v0.1) 4.5 How the system reacts (summary — full design in a later document)
 
 | Event | Behavior |
 |---|---|
@@ -227,17 +295,21 @@ stateDiagram-v2
 | Two staff serve the same entry | Conditional update: one wins, the other gets a 409 and its UI refreshes. |
 | Network interruption | Commands are idempotent (client-generated command id). On reconnect the client sends `lastSeq`; the server replays events from `queue.event` if the gap is small, otherwise the client fetches a snapshot. Staff UI shows a "stale" banner after N seconds without a heartbeat. |
 
+
+</details>
+
 ### 4.6 Real-time protocol
 
 ```
-client → server: SUBSCRIBE { channel: "branch:<id>:queue" | "entry:<id>", lastSeq?: n }
-server → client: SNAPSHOT { seq, state }   // when lastSeq is missing or too old
-server → client: EVENT { seq, type, payload }   // strictly increasing per channel
+client → server: SUBSCRIBE { channel: "branch:<id>:board" | "session:<id>" | "entry:<id>", lastSeq?: n }
+server → client: SNAPSHOT { seq, state }   // when lastSeq is missing or too old; consistent REPEATABLE READ read
+server → client: EVENTS { seq, events: [{ idx, type, payload }] }   // one batch per committed transaction; seq strictly increasing per queue
 server → client: HEARTBEAT { seq }   // every 15 s
 ```
 
 - Authorization is checked at subscribe time and again on token refresh.
-- Customer channels carry only the customer's own entry plus their aggregate position and ETA.
+- Customer channels carry only the customer's own session/entries plus their aggregate position and ETA.
+- Client gap handling (duplicate / apply / replay / snapshot): [queue-lifecycle §9](domain/queue-lifecycle.md).
 - Fan-out:
   1. The outbox relay publishes to PostgreSQL `NOTIFY` (pilot) or Redis pub/sub (scale).
   2. Each gateway instance forwards to its connected subscribers.
@@ -255,7 +327,7 @@ server → client: HEARTBEAT { seq }   // every 15 s
 - RLS policies compare against `current_setting('app.tenant_id')`.
 
 **Database roles:**
-- The application role is **not** the table owner and has no `BYPASSRLS`.
+- Runtime roles are **not** table owners and have no `BYPASSRLS`. Staff and customer surfaces use **separate DB roles** (`turnio_app_staff`, `turnio_app_customer`), so a customer command never runs with full business context ([security §3, §5.3](architecture/tenant-isolation-and-security.md)).
 - Migrations run under a separate owner role.
 
 **Public / marketplace reads:**
@@ -282,7 +354,7 @@ server → client: HEARTBEAT { seq }   // every 15 s
 - `SET` instead of `SET LOCAL` with a connection pool leaks context between requests. Use `SET LOCAL` inside the transaction only.
 - Views must use `security_invoker`.
 - `SECURITY DEFINER` functions are banned unless reviewed.
-- CI fails if any tenant-owned table lacks an RLS policy.
+- CI fails if any table is missing from the classification registry, or if a protected class lacks forced RLS and `TO`-scoped policies ([database-design §3.0](architecture/database-design.md)).
 
 ---
 
@@ -316,6 +388,8 @@ Three processes run from one codebase and one image: `api`, `realtime`, and `wor
 ---
 
 ## 7. Domain model notes (preliminary — full model after decisions)
+
+> *Superseded (v0.2):* see [domain-model](domain/domain-model.md) and the [glossary](domain/domain-glossary.md).
 
 The distinctions required by the brief, as currently proposed:
 
